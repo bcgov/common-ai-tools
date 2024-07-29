@@ -8,7 +8,7 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "nodemon --exec \"npm run build && node --env-file=.env dist/app.js\" ",
+    "start": "nodemon --exec \"npm run build && node --experimental-modules --env-file=.env dist/app.js\" ",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
@@ -19,8 +19,12 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
+    "@langchain/community": "^0.2.20",
+    "@langchain/openai": "^0.2.5",
+    "chromadb": "^1.8.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "langchain": "^0.2.11",
     "octokit": "^4.0.2"
   }
 }
