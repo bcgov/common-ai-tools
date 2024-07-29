@@ -2,9 +2,6 @@
 /app/dist
 
 # local env files
-*local.*
-*local-*.*
-.env.local
-.env.*.local
+.env
 
 
