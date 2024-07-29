@@ -1,0 +1,10 @@
+/app/node_modules
+/app/dist
+
+# local env files
+*local.*
+*local-*.*
+.env.local
+.env.*.local
+
+
