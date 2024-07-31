@@ -3,7 +3,10 @@ import 'dotenv/config'
 import type { NextFunction, Request, Response } from 'express';
 
 // Langchain AI modules
-import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
+// import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
+
+import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
+
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { Chroma } from "@langchain/community/vectorstores/chroma";
 import { OpenAIEmbeddings, ChatOpenAI } from "@langchain/openai";
@@ -25,58 +28,73 @@ const controller = {
    */
   create: async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // --------- get documents from GitHub repo source, using Github API
-      // ref: https://docs.github.com/en/rest/repos/contents?apiVersion=2022-11-28#get-repository-content
-      const { Octokit: Octokit } = await import('octokit');
-      // authenticate - use a personal token, authorized for bcgov org
-      const octokit = new Octokit({
-        auth: process.env.GITHUB_TOKEN,
-      });
-      // get list of wiki pages
-      const repoFiles: unknown = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-        owner: req.body.owner,
-        repo: req.body.repo,
-        path: req.body.path,
-        headers: {
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
-      });
-      const urlArray = repoFiles.data
-        .filter((file) => file.type === 'file')
-        .map((file) => file.download_url);
 
-        let response: unknown = {
-          owner: req.body.owner,
-          repo: req.body.repo,
-          path: req.body.path,
-          urlCount: urlArray.length,
-          urls: []
+      const data = {
+        repo: req.body.repo, // eg: "https://github.com/bcgov/common-object-management-service-docs"
+        branch: req.body.branch ?? 'main', // eg: "main"
+        ignore: (req.body.path && req.body.path.length) ? ['*', '/*', `!/${req.body.path}/`] : [], // eg: "docs"
+        ignorePath: req.body.ignorePath ?? [], // eg: ".yaml"
+        recursive: req.body.recursive ?? true  // eg: true
+      }
+      // https://js.langchain.com/v0.2/docs/integrations/document_loaders/web_loaders/github
+      // https://v02.api.js.langchain.com/classes/langchain_community_document_loaders_web_github.GithubRepoLoader.html#ignorePaths
+      const config = {
+        branch: data.branch,
+        recursive: data.recursive,
+        ignore: data.ignore,
+        ignorePaths: data.ignorePaths,
+        unknown: "warn",
+        maxConcurrency: 5, // Defaults to 2
+      };
+
+      console.log('config', config);
+
+      const loader = new GithubRepoLoader(
+        data.repo, config
+      );
+      const docs = await loader.load();
+      
+      // reformat
+      const documents = docs.map(d => {
+        return {
+          file: d.metadata.source,
+          pageContent: d.pageContent
         };
+     });
+
+      // let response = '';
+      let response: unknown = {
+        repo: req.body.repo,
+        branch: req.body.branch,
+        path: req.body.path,
+        ignorePaths: req.body.ignorePaths,
+        fileCount: documents.length,
+        files: documents.map(d => d.file),
+        vectorStore: `${req.body.repo}/${req.body.path}`,
+        vectorCount: 0
+      };
         
       // add vectors to a database
-      for (const url of urlArray) {
-        // get document
-        const loader = new CheerioWebBaseLoader(url);
-        const document = await loader.load();
+      for (const doc of documents) {
 
-        const splitter = RecursiveCharacterTextSplitter.fromLanguage("markdown", {
+        const textSplitter = new RecursiveCharacterTextSplitter({ 
           chunkSize: 500,
-          chunkOverlap: 50
+          chunkOverlap: 50 
         });
-        const splits = await splitter.splitDocuments([document]);
-        console.log(`splits ${splits}`);
-        
+        const splits = await textSplitter.createDocuments([doc.pageContent]);
+        console.log(`splits ${splits.length}`);
+      
         // create vectors in chromadb database (running in separate container)
-        const vectorStore = await Chroma.fromDocuments(
+        await Chroma.fromDocuments(
           splits,
           new OpenAIEmbeddings(),
           {
-            collectionName: req.body.repo,
+            // collectionName: req.body.repo,
+            collectionName: `${/[^/]*$/.exec(req.body.repo)[0]}`,
             url: "http://localhost:8000", // Optional, will default to this value
           }
         );
-        console.log(`vectorStore ${vectorStore}`);
-        response.urls.push(url)
+        response.vectorCount = response.vectorCount + splits.length;
       }
       
       res.status(200).send(response);
@@ -92,7 +110,8 @@ const controller = {
       const model = new ChatOpenAI({});
       const vectorStore = await Chroma.fromExistingCollection(
         new OpenAIEmbeddings(),
-        { collectionName: req.body.repo }
+        // { collectionName: req.body.repo }
+        { collectionName: 'test1' }
       );
       const retriever = vectorStore.asRetriever();
       const prompt =
@@ -114,8 +133,8 @@ const controller = {
       console.log(req.body.question);
 
       const result = {
-        owner: req.body.owner,
         repo: req.body.repo,
+        branch: req.body.branch,
         path: req.body.path,
         answer: await chain.invoke(req.body.question)
       };
